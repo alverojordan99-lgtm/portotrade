@@ -1,0 +1,827 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dasboard Future</title>
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
+        import { getFirestore, collection, addDoc, onSnapshot, doc, deleteDoc, query, orderBy } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCXQgIw_7SpToZfk18o30WhuukaYBUD1No",
+            authDomain: "future-61133.firebaseapp.com",
+            projectId: "future-61133",
+            storageBucket: "future-61133.firebasestorage.app",
+            messagingSenderId: "132640125498",
+            appId: "1:132640125498:web:73719ad81f8bb0b05efb03"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        const themeToggle = document.getElementById('theme-toggle');
+        function setTheme(theme) {
+            if (theme === 'dark') {
+                document.body.classList.add('dark');
+                themeToggle.textContent = '☀️';
+            } else {
+                document.body.classList.remove('dark');
+                themeToggle.textContent = '🌙';
+            }
+            localStorage.setItem('theme', theme);
+        }
+        const savedTheme = localStorage.getItem('theme');
+        if (savedTheme) {
+            setTheme(savedTheme);
+        } else {
+            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            setTheme(prefersDark ? 'dark' : 'light');
+        }
+        themeToggle.addEventListener('click', () => {
+            const isDark = document.body.classList.contains('dark');
+            setTheme(isDark ? 'light' : 'dark');
+        });
+
+        function formatNumber(num, decimals = 2) {
+            return num.toFixed(decimals).replace(/\d(?=(\d{3})+\.)/g, '$&,');
+        }
+
+        const lastUpdatedSpan = document.getElementById('last-updated');
+        function updateLastUpdated() {
+            const now = new Date();
+            const utc7 = new Date(now.getTime() + (7 * 60 * 60 * 1000));
+            const options = { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+            lastUpdatedSpan.textContent = utc7.toLocaleString('id-ID', options).replace(',', '') + ' UTC+7';
+        }
+        updateLastUpdated();
+        setInterval(updateLastUpdated, 1000);
+
+        // ================== FUNGSI SETUP TAB ==================
+        function setupTab(tabId, collectionName) {
+            const tableBody = document.getElementById(`table-body-${tabId}`);
+            const winCountSpan = document.getElementById(`win-count-${tabId}`);
+            const lossCountSpan = document.getElementById(`loss-count-${tabId}`);
+            const profitAmountSpan = document.getElementById(`profit-amount-${tabId}`);
+            const lossAmountSpan = document.getElementById(`loss-amount-${tabId}`);
+            const totalTradesSpan = document.getElementById(`total-trades-${tabId}`);
+            const netPnlSpan = document.getElementById(`net-pnl-${tabId}`);
+            const winRateSpan = document.getElementById(`win-rate-${tabId}`);
+            const form = document.getElementById(`form-${tabId}`);
+            const pairInput = document.getElementById(`pair-${tabId}`);
+            const positionSelect = document.getElementById(`position-${tabId}`);
+            const pnlInput = document.getElementById(`pnl-${tabId}`);
+
+            let trades = [];
+            const tradesCollection = collection(db, collectionName);
+
+            function updateStats() {
+                const total = trades.length;
+                const wins = trades.filter(t => t.status === 'win').length;
+                const losses = trades.filter(t => t.status === 'loss').length;
+                const winRate = total ? (wins / total * 100) : 0;
+
+                const profit = trades.reduce((acc, t) => acc + (t.pnl > 0 ? t.pnl : 0), 0);
+                const loss = trades.reduce((acc, t) => acc + (t.pnl < 0 ? t.pnl : 0), 0);
+                const net = profit + loss;
+
+                winCountSpan.textContent = wins;
+                lossCountSpan.textContent = losses;
+                profitAmountSpan.textContent = `+${formatNumber(profit)}`;
+                lossAmountSpan.textContent = formatNumber(loss);
+                totalTradesSpan.textContent = total;
+                netPnlSpan.innerHTML = net >= 0 ? `+${formatNumber(net)}` : formatNumber(net);
+                winRateSpan.textContent = `${winRate.toFixed(2)}%`;
+            }
+
+            function renderTrades() {
+                if (!tableBody) return;
+                tableBody.innerHTML = '';
+                trades.forEach((trade, index) => {
+                    const row = document.createElement('tr');
+                    row.className = 'border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800';
+
+                    const tdNo = document.createElement('td');
+                    tdNo.className = 'py-3 px-3 text-gray-500 dark:text-gray-400';
+                    tdNo.textContent = index + 1;
+                    row.appendChild(tdNo);
+
+                    const tdPair = document.createElement('td');
+                    tdPair.className = 'py-3 px-3 font-medium dark:text-gray-200';
+                    tdPair.textContent = trade.pair || '-';
+                    row.appendChild(tdPair);
+
+                    const tdPos = document.createElement('td');
+                    tdPos.className = 'py-3 px-3 dark:text-gray-300';
+                    tdPos.textContent = trade.position || '-';
+                    row.appendChild(tdPos);
+
+                    const tdPnl = document.createElement('td');
+                    tdPnl.className = 'py-3 px-3 font-mono';
+                    const pnlValue = trade.pnl;
+                    if (pnlValue > 0) {
+                        tdPnl.innerHTML = `<span class="text-green-600 dark:text-green-400 font-bold">+${pnlValue}</span>`;
+                    } else if (pnlValue < 0) {
+                        tdPnl.innerHTML = `<span class="text-red-600 dark:text-red-400 font-bold">${pnlValue}</span>`;
+                    } else {
+                        tdPnl.textContent = pnlValue ?? '-';
+                    }
+                    row.appendChild(tdPnl);
+
+                    const tdStatus = document.createElement('td');
+                    tdStatus.className = 'py-3 px-3';
+                    let statusBadge = '';
+                    if (trade.status === 'win') {
+                        statusBadge = '<span class="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-3 py-1 rounded-full text-xs font-semibold">WIN</span>';
+                    } else if (trade.status === 'loss') {
+                        statusBadge = '<span class="bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 px-3 py-1 rounded-full text-xs font-semibold">LOSS</span>';
+                    } else {
+                        statusBadge = '<span class="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-3 py-1 rounded-full text-xs font-semibold">PENDING</span>';
+                    }
+                    tdStatus.innerHTML = statusBadge;
+                    row.appendChild(tdStatus);
+
+                    const tdActions = document.createElement('td');
+                    tdActions.className = 'py-3 px-3';
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.innerHTML = '🗑️';
+                    deleteBtn.className = 'text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 text-lg';
+                    deleteBtn.title = 'Hapus trade';
+                    deleteBtn.onclick = async () => {
+                        if (confirm('Hapus trade ini?')) {
+                            try {
+                                await deleteDoc(doc(db, collectionName, trade.id));
+                            } catch (error) {
+                                console.error('Error deleting: ', error);
+                                alert('Gagal menghapus');
+                            }
+                        }
+                    };
+                    tdActions.appendChild(deleteBtn);
+                    row.appendChild(tdActions);
+
+                    tableBody.appendChild(row);
+                });
+                updateStats();
+            }
+
+            const q = query(tradesCollection, orderBy('timestamp', 'desc'));
+            onSnapshot(q, (snapshot) => {
+                trades = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                renderTrades();
+            }, (error) => {
+                console.error(`Snapshot error (${collectionName}): `, error);
+                alert(`Gagal memuat data dari ${collectionName}. Periksa Firebase.`);
+            });
+
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const pair = pairInput.value.trim().toUpperCase();
+                const position = positionSelect.value;
+                const pnl = parseFloat(pnlInput.value);
+
+                if (!pair || !position || isNaN(pnl)) {
+                    alert('Isi semua field dengan benar (PNL harus angka)');
+                    return;
+                }
+
+                let status = 'pending';
+                if (pnl > 0) status = 'win';
+                else if (pnl < 0) status = 'loss';
+
+                try {
+                    await addDoc(tradesCollection, {
+                        pair,
+                        position,
+                        pnl,
+                        status,
+                        timestamp: new Date().toISOString()
+                    });
+                    form.reset();
+                    pairInput.focus();
+                } catch (error) {
+                    console.error('Error adding: ', error);
+                    alert('Gagal menambah trade');
+                }
+            });
+        }
+
+        setupTab('1', '_trades_v3');
+        setupTab('2', '_trades_v4');
+        setupTab('3', '_trades_v5'); 
+
+        // ================== TAB NAVIGATION ==================
+        const tabButtons = document.querySelectorAll('.tab-btn');
+        const tabContents = document.querySelectorAll('.tab-content');
+
+        function switchTab(tabId) {
+            tabContents.forEach(content => content.classList.remove('active'));
+            tabButtons.forEach(btn => btn.classList.remove('active'));
+            document.getElementById(`tab-${tabId}`).classList.add('active');
+            document.querySelector(`.tab-btn[data-tab="${tabId}"]`).classList.add('active');
+        }
+
+        tabButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tabId = btn.getAttribute('data-tab');
+                switchTab(tabId);
+            });
+        });
+
+        switchTab('1');
+    </script>
+
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f3f4f6;
+            padding: 24px;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        body.dark {
+            background: #111827;
+            color: #e5e7eb;
+        }
+        .dashboard {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .tab-nav {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .tab-btn {
+            padding: 12px 28px;
+            border: none;
+            background: #e2e8f0;
+            color: #1e293b;
+            font-weight: 600;
+            border-radius: 40px;
+            cursor: pointer;
+            transition: 0.2s;
+            font-size: 1rem;
+        }
+        body.dark .tab-btn {
+            background: #2d3748;
+            color: #e5e7eb;
+        }
+        .tab-btn.active {
+            background: #0f172a;
+            color: white;
+        }
+        body.dark .tab-btn.active {
+            background: #3b82f6;
+            color: white;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .card {
+            background: white;
+            border-radius: 32px;
+            box-shadow: 0 20px 35px -10px rgba(0,0,0,0.15);
+            padding: 28px;
+            margin-bottom: 24px;
+            transition: background-color 0.3s, border-color 0.3s;
+        }
+        body.dark .card {
+            background: #1f2937;
+            border: 1px solid #374151;
+            box-shadow: 0 20px 35px -10px rgba(0,0,0,0.5);
+        }
+        .header-title {
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(145deg, #0b1120, #1e293b);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 6px;
+        }
+        body.dark .header-title {
+            background: linear-gradient(145deg, #e2e8f0, #94a3b8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        #theme-toggle {
+            background: none;
+            border: none;
+            font-size: 2rem;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+            transition: transform 0.2s;
+        }
+        #theme-toggle:hover {
+            transform: scale(1.1);
+        }
+        .timestamp {
+            background: #dbeafe;
+            padding: 8px 20px;
+            border-radius: 40px;
+            font-size:0.9rem;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        body.dark .timestamp {
+            background: #1e3a8a;
+            color: #bfdbfe;
+        }
+        .stats-modern {
+            background: #f8fafc;
+            border-radius: 40px;
+            padding: 24px 28px;
+            margin-bottom: 30px;
+            border: 1px solid #e2e8f0;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            transition: background-color 0.3s, border-color 0.3s;
+        }
+        body.dark .stats-modern {
+            background: #2d3748;
+            border-color: #4b5563;
+        }
+        .stats-left {
+            display: flex;
+            gap: 40px;
+            flex-wrap: wrap;
+        }
+        .stat-block {
+            display: flex;
+            flex-direction: column;
+        }
+        .stat-block .label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: #64748b;
+            letter-spacing: 0.3px;
+        }
+        body.dark .stat-block .label {
+            color: #9ca3af;
+        }
+        .stat-block .value {
+            font-size: 2rem;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+        .profit-text { color: #059669; }
+        .loss-text { color: #b91c1c; }
+        body.dark .profit-text { color: #34d399; }
+        body.dark .loss-text { color: #f87171; }
+        .stats-right {
+            display: flex;
+            gap: 40px;
+            flex-wrap: wrap;
+            background: #eef2f6;
+            padding: 16px 28px;
+            border-radius: 60px;
+            transition: background-color 0.3s;
+        }
+        body.dark .stats-right {
+            background: #374151;
+        }
+        .right-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .right-item .label {
+            font-size: 0.7rem;
+            color: #475569;
+        }
+        body.dark .right-item .label {
+            color: #9ca3af;
+        }
+        .right-item .value {
+            font-weight: 700;
+            font-size: 1.4rem;
+        }
+        /* FORM DI ATAS TABEL */
+        .form-add {
+            background: #f1f5f9;
+            border-radius: 32px;
+            padding: 24px;
+            margin-bottom: 24px;   /* jarak dengan tabel */
+            transition: background-color 0.3s;
+        }
+        body.dark .form-add {
+            background: #2d3748;
+        }
+        .form-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            align-items: flex-end;
+        }
+        .field {
+            display: flex;
+            flex-direction: column;
+            min-width: 160px;
+        }
+        .field label {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: #475569;
+            margin-bottom: 5px;
+        }
+        body.dark .field label {
+            color: #9ca3af;
+        }
+        .field input, .field select {
+            padding: 12px 16px;
+            border: 1px solid #cbd5e1;
+            border-radius: 24px;
+            background: white;
+            font-size: 0.95rem;
+            outline: none;
+            transition: 0.2s, background-color 0.3s, border-color 0.3s;
+        }
+        body.dark .field input, body.dark .field select {
+            background: #374151;
+            border-color: #4b5563;
+            color: #e5e7eb;
+        }
+        .field input:focus, .field select:focus {
+            border-color: #2563eb;
+            box-shadow: 0 0 0 3px rgba(37,99,235,0.2);
+        }
+        .btn-primary {
+            background: #0f172a;
+            color: white;
+            border: none;
+            padding: 12px 36px;
+            border-radius: 40px;
+            font-weight: 600;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: 0.15s, background-color 0.3s;
+            margin-top: 18px;
+            box-shadow: 0 8px 18px rgba(15,23,42,0.2);
+        }
+        body.dark .btn-primary {
+            background: #3b82f6;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #1e293b;
+            transform: scale(1.02);
+        }
+        body.dark .btn-primary:hover {
+            background: #2563eb;
+        }
+        .table-container {
+            overflow-x: auto;
+            border-radius: 24px;
+            border: 1px solid #e2e8f0;
+            background: white;
+            margin: 20px 0;
+            transition: background-color 0.3s, border-color 0.3s;
+        }
+        body.dark .table-container {
+            background: #1f2937;
+            border-color: #374151;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95rem;
+        }
+        th {
+            text-align: left;
+            padding: 16px 12px;
+            background: #f1f5f9;
+            color: #1e293b;
+            font-weight: 600;
+            border-bottom: 2px solid #cbd5e1;
+            transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+        }
+        body.dark th {
+            background: #2d3748;
+            color: #e5e7eb;
+            border-bottom-color: #4b5563;
+        }
+        td {
+            padding: 14px 12px;
+            border-bottom: 1px solid #e2e8f0;
+            transition: border-color 0.3s;
+        }
+        body.dark td {
+            border-bottom-color: #374151;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            font-size: 1rem;
+            color: #64748b;
+            border-top: 1px dashed #cbd5e1;
+            padding-top: 20px;
+            transition: border-color 0.3s, color 0.3s;
+        }
+        body.dark .footer {
+            border-top-color: #374151;
+            color: #9ca3af;
+        }
+        .footer span {
+            font-weight: 600;
+            background: #e2e8f0;
+            padding: 4px 14px;
+            border-radius: 40px;
+            color: #0f172a;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        body.dark .footer span {
+            background: #374151;
+            color: #e5e7eb;
+        }
+    </style>
+</head>
+<body>
+<div class="dashboard">
+    <!-- Header global -->
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-bottom: 24px;">
+        <div>
+            <div class="header-title">Dasboard Future</div>
+        </div>
+        <div class="header-right">
+            <button id="theme-toggle" title="Ganti tema">🌙</button>
+            <div class="timestamp">
+                🕒 <span id="last-updated"></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="tab-nav">
+        <button class="tab-btn" data-tab="1">VIP</button>
+        <button class="tab-btn" data-tab="2">VVIP</button>
+        <button class="tab-btn" data-tab="3">Pesonal Calls</button> <!-- Tab baru -->
+    </div>
+
+    <!-- Tab 1 -->
+    <div id="tab-1" class="tab-content">
+        <div class="card">
+            <!-- Panel statistik Tab 1 -->
+            <div class="stats-modern">
+                <div class="stats-left">
+                    <div class="stat-block">
+                        <span class="label">WIN</span>
+                        <span class="value" id="win-count-1">0</span>
+                    </div>
+                    <div class="stat-block">
+                        <span class="label">LOSS</span>
+                        <span class="value" id="loss-count-1">0</span>
+                    </div>
+                    <div class="stat-block">
+                        <span class="label">PROFIT</span>
+                        <span class="value profit-text" id="profit-amount-1">+0.00</span>
+                    </div>
+                    <div class="stat-block">
+                        <span class="label">LOSS</span>
+                        <span class="value loss-text" id="loss-amount-1">0.00</span>
+                    </div>
+                </div>
+                <div class="stats-right">
+                    <div class="right-item">
+                        <span class="label">Total Trades</span>
+                        <span class="value" id="total-trades-1">0</span>
+                    </div>
+                    <div class="right-item">
+                        <span class="label">Net P&L</span>
+                        <span class="value" id="net-pnl-1">+0.00</span>
+                    </div>
+                    <div class="right-item">
+                        <span class="label">Win Rate</span>
+                        <span class="value" id="win-rate-1">0%</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-add">
+                <h3 style="margin:0 0 16px 0; font-weight:600;">ADD Transaction VIP</h3>
+                <form id="form-1">
+                    <div class="form-row">
+                        <div class="field">
+                            <label>PAIR</label>
+                            <input type="text" id="pair-1" placeholder="ETH/USDT" required>
+                        </div>
+                        <div class="field">
+                            <label>POSITION</label>
+                            <select id="position-1" required>
+                                <option value="Long">Long</option>
+                                <option value="Short">Short</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>PNL (+/-)</label>
+                            <input type="number" step="any" id="pnl-1" placeholder="+20" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn-primary">Save</button>
+                </form>
+            </div>
+
+            <!-- Tabel Tab 1 -->
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>PAIR</th>
+                            <th>POSITION</th>
+                            <th>PNL</th>
+                            <th>STATUS</th>
+                            <th>AKSI</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-body-1">
+                        <tr><td colspan="6" style="text-align:center; padding:40px;">Memuat data...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab 2 -->
+    <div id="tab-2" class="tab-content">
+        <div class="card">
+            <!-- Panel statistik Tab 2 -->
+            <div class="stats-modern">
+                <div class="stats-left">
+                    <div class="stat-block">
+                        <span class="label">WIN</span>
+                        <span class="value" id="win-count-2">0</span>
+                    </div>
+                    <div class="stat-block">
+                        <span class="label">LOSS</span>
+                        <span class="value" id="loss-count-2">0</span>
+                    </div>
+                    <div class="stat-block">
+                        <span class="label">PROFIT</span>
+                        <span class="value profit-text" id="profit-amount-2">+0.00</span>
+                    </div>
+                    <div class="stat-block">
+                        <span class="label">LOSS</span>
+                        <span class="value loss-text" id="loss-amount-2">0.00</span>
+                    </div>
+                </div>
+                <div class="stats-right">
+                    <div class="right-item">
+                        <span class="label">Total Trades</span>
+                        <span class="value" id="total-trades-2">0</span>
+                    </div>
+                    <div class="right-item">
+                        <span class="label">Net P&L</span>
+                        <span class="value" id="net-pnl-2">+0.00</span>
+                    </div>
+                    <div class="right-item">
+                        <span class="label">Win Rate</span>
+                        <span class="value" id="win-rate-2">0%</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-add">
+                <h3 style="margin:0 0 16px 0; font-weight:600;">ADD Transaction VVIP</h3>
+                <form id="form-2">
+                    <div class="form-row">
+                        <div class="field">
+                            <label>PAIR</label>
+                            <input type="text" id="pair-2" placeholder="BTC/USDT" required>
+                        </div>
+                        <div class="field">
+                            <label>POSITION</label>
+                            <select id="position-2" required>
+                                <option value="Long">Long</option>
+                                <option value="Short">Short</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>PNL (+/-)</label>
+                            <input type="number" step="any" id="pnl-2" placeholder="-5.5" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn-primary">Save</button>
+                </form>
+            </div>
+
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>PAIR</th>
+                            <th>POSITION</th>
+                            <th>PNL</th>
+                            <th>STATUS</th>
+                            <th>AKSI</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-body-2">
+                        <tr><td colspan="6" style="text-align:center; padding:40px;">Memuat data...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab 3 (SVIP) -->
+    <div id="tab-3" class="tab-content">
+        <div class="card">
+            <!-- Panel statistik Tab 3 -->
+            <div class="stats-modern">
+                <div class="stats-left">
+                    <div class="stat-block">
+                        <span class="label">WIN</span>
+                        <span class="value" id="win-count-3">0</span>
+                    </div>
+                    <div class="stat-block">
+                        <span class="label">LOSS</span>
+                        <span class="value" id="loss-count-3">0</span>
+                    </div>
+                    <div class="stat-block">
+                        <span class="label">PROFIT</span>
+                        <span class="value profit-text" id="profit-amount-3">+0.00</span>
+                    </div>
+                    <div class="stat-block">
+                        <span class="label">LOSS</span>
+                        <span class="value loss-text" id="loss-amount-3">0.00</span>
+                    </div>
+                </div>
+                <div class="stats-right">
+                    <div class="right-item">
+                        <span class="label">Total Trades</span>
+                        <span class="value" id="total-trades-3">0</span>
+                    </div>
+                    <div class="right-item">
+                        <span class="label">Net P&L</span>
+                        <span class="value" id="net-pnl-3">+0.00</span>
+                    </div>
+                    <div class="right-item">
+                        <span class="label">Win Rate</span>
+                        <span class="value" id="win-rate-3">0%</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-add">
+                <h3 style="margin:0 0 16px 0; font-weight:600;">ADD Transaction </h3>
+                <form id="form-3">
+                    <div class="form-row">
+                        <div class="field">
+                            <label>PAIR</label>
+                            <input type="text" id="pair-3" placeholder="SOL/USDT" required>
+                        </div>
+                        <div class="field">
+                            <label>POSITION</label>
+                            <select id="position-3" required>
+                                <option value="Long">Long</option>
+                                <option value="Short">Short</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>PNL (+/-)</label>
+                            <input type="number" step="any" id="pnl-3" placeholder="+12.5" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn-primary">Save</button>
+                </form>
+            </div>
+
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>PAIR</th>
+                            <th>POSITION</th>
+                            <th>PNL</th>
+                            <th>STATUS</th>
+                            <th>AKSI</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-body-3">
+                        <tr><td colspan="6" style="text-align:center; padding:40px;">Memuat data...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <span> powered by RS</span>
+    </div>
+</div>
+</body>
+</html>
+
